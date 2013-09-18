@@ -27,43 +27,39 @@ namespace dense_tracker {
 DenseTracker::DenseTracker()
 {
     // parameters for descriptors
-    patch_size = 32;
-    nxy_cell = 2;
-    nt_cell = 3;
-    fullOrientation = true;
-    epsilon = 0.05;
-    float min_flow = 0.4f * 0.4f;
+    m_patch_size = 32;
+    m_nxy_cell = 2;
+    m_nt_cell = 3;
+    m_fullOrientation = true;
+    m_epsilon = 0.05;
+    m_min_flow = 0.4f * 0.4f;
     
     // parameters for tracking
-    start_frame = 0;
-    end_frame = 1000000;
-    quality = 0.001;
-    min_distance = 5;
-    init_gap = 1;
-    track_length = 15;
+    m_start_frame = 0;
+    m_end_frame = 1000000;
+    m_quality = 0.001;
+    m_min_distance = 5;
+    m_init_gap = 1;
+    m_track_length = 15;
     
     // parameters for the trajectory descriptor
-    float min_var = sqrt(3);
-    float max_var = 50;
-    float max_dis = 20;
+    m_min_var = sqrt(3);
+    m_max_var = 50;
+    m_max_dis = 20;
     
     // parameters for multi-scale
-    scale_num = 8;
-    scale_stride = sqrt(2);
-    
-    // Images
-    IplImageWrapper image, prev_image, grey, prev_grey;
-    IplImagePyramid grey_pyramid, prev_grey_pyramid, eig_pyramid;
+    m_scale_num = 8;
+    m_scale_stride = sqrt(2);
     
     // I/O
-    capture = 0;
-    fscales = 0; // float scale values
-    show_track = 1; // set show_track = 1, if you want to visualize the trajectories
+    m_capture = 0;
+    m_fscales = 0; // float scale values
+    m_show_track = 1; // set m_show_track = 1, if you want to visualize the trajectories
     
-    InitTrackerInfo(&tracker, track_length, init_gap);
-    InitDescInfo(&hogInfo, 8, 0, 1, patch_size, nxy_cell, nt_cell);
-    InitDescInfo(&hofInfo, 9, 1, 1, patch_size, nxy_cell, nt_cell);
-    InitDescInfo(&mbhInfo, 8, 0, 1, patch_size, nxy_cell, nt_cell);
+    InitTrackerInfo(&m_tracker, m_track_length, m_init_gap);
+    InitDescInfo(&m_hogInfo, 8, 0, 1, m_patch_size, m_nxy_cell, m_nt_cell);
+    InitDescInfo(&m_hofInfo, 9, 1, 1, m_patch_size, m_nxy_cell, m_nt_cell);
+    InitDescInfo(&m_mbhInfo, 8, 0, 1, m_patch_size, m_nxy_cell, m_nt_cell);
 }
 
 DenseTracker::~DenseTracker()
@@ -73,147 +69,146 @@ DenseTracker::~DenseTracker()
 
 int DenseTracker::loop()
 {
-    int c;
-    frameNum = 0;
+    m_frameNum = 0;
 
     char* video = "/home/nestor/Dropbox/projects/DenseTracker/examples/person01_boxing_d1_uncomp.avi";
 //     arg_parse(argc, argv);
 
-    //      std::cerr << "start_frame: " << start_frame << " end_frame: " << end_frame << " track_length: " << track_length << std::endl;
-    //      std::cerr << "min_distance: " << min_distance << " patch_size: " << patch_size << " nxy_cell: " << nxy_cell << " nt_cell: " << nt_cell << std::endl;
+    //      std::cerr << "m_start_frame: " << m_start_frame << " m_end_frame: " << m_end_frame << " m_track_length: " << m_track_length << std::endl;
+    //      std::cerr << "m_min_distance: " << m_min_distance << " m_patch_size: " << m_patch_size << " m_nxy_cell: " << m_nxy_cell << " m_nt_cell: " << m_nt_cell << std::endl;
 
-    capture = cvCreateFileCapture(video);
+    m_capture = cvCreateFileCapture(video);
 
-    if( !capture ) {
+    if( !m_capture ) {
         printf( "Could not initialize capturing..\n" );
         return -1;
     }
 
-    if( show_track == 1 )
+    if( m_show_track == 1 )
         cvNamedWindow( "DenseTrack", 0 );
 
-    init_counter = 0; // indicate when to detect new feature points
+    m_init_counter = 0; // indicate when to detect new feature points
     while( true ) {
         IplImage* frame = 0;
 
         // get a new frame
-        frame = cvQueryFrame( capture );
+        frame = cvQueryFrame( m_capture );
         if( !frame ) {
             //printf("break");
             break;
         }
-        if( frameNum >= start_frame && frameNum <= end_frame ) {
+        if( m_frameNum >= m_start_frame && m_frameNum <= m_end_frame ) {
             compute(frame);
         }
 
-        if( show_track == 1 ) {
-            cvShowImage( "DenseTrack", image);
-            c = cvWaitKey(3);
+        if( m_show_track == 1 ) {
+            cvShowImage( "DenseTrack", m_image);
+            int c = cvWaitKey(3);
             if((char)c == 27) break;
         }
         // get the next frame
     }
 
-    if( show_track == 1 )
+    if( m_show_track == 1 )
         cvDestroyWindow("DenseTrack");
 }
 
 int DenseTracker::compute(IplImage* frame)
 {
     int i, j;
-    if( !image ) {
+    if( ! m_image ) {
         // initailize all the buffers
-        image = IplImageWrapper( cvGetSize(frame), 8, 3 );
-        image->origin = frame->origin;
-        prev_image= IplImageWrapper( cvGetSize(frame), 8, 3 );
-        prev_image->origin = frame->origin;
-        grey = IplImageWrapper( cvGetSize(frame), 8, 1 );
-        grey_pyramid = IplImagePyramid( cvGetSize(frame), 8, 1, scale_stride );
-        prev_grey = IplImageWrapper( cvGetSize(frame), 8, 1 );
-        prev_grey_pyramid = IplImagePyramid( cvGetSize(frame), 8, 1, scale_stride );
-        eig_pyramid = IplImagePyramid( cvGetSize(frame), 32, 1, scale_stride );
+        m_image = IplImageWrapper( cvGetSize(frame), 8, 3 );
+        m_image->origin = frame->origin;
+        m_prev_image= IplImageWrapper( cvGetSize(frame), 8, 3 );
+        m_prev_image->origin = frame->origin;
+        m_grey = IplImageWrapper( cvGetSize(frame), 8, 1 );
+        m_grey_pyramid = IplImagePyramid( cvGetSize(frame), 8, 1, m_scale_stride );
+        m_prev_grey = IplImageWrapper( cvGetSize(frame), 8, 1 );
+        m_prev_grey_pyramid = IplImagePyramid( cvGetSize(frame), 8, 1, m_scale_stride );
+        m_eig_pyramid = IplImagePyramid( cvGetSize(frame), 32, 1, m_scale_stride );
         
-        cvCopy( frame, image, 0 );
-        cvCvtColor( image, grey, CV_BGR2GRAY );
-        grey_pyramid.rebuild( grey );
+        cvCopy( frame, m_image, 0 );
+        cvCvtColor( m_image, m_grey, CV_BGR2GRAY );
+        m_grey_pyramid.rebuild( m_grey );
         
         // how many scale we can have
-        scale_num = std::min<std::size_t>(scale_num, grey_pyramid.numOfLevels());
-        fscales = (float*)cvAlloc(scale_num*sizeof(float));
-        xyScaleTracks.resize(scale_num);
+        m_scale_num = std::min<std::size_t>(m_scale_num, m_grey_pyramid.numOfLevels());
+        m_fscales = (float*)cvAlloc(m_scale_num*sizeof(float));
+        m_xyScaleTracks.resize(m_scale_num);
         
-        for( int ixyScale = 0; ixyScale < scale_num; ++ixyScale ) {
-            std::list<Track>& tracks = xyScaleTracks[ixyScale];
-            fscales[ixyScale] = pow(scale_stride, ixyScale);
+        for( int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
+            std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
+            m_fscales[ixyScale] = pow(m_scale_stride, ixyScale);
             
             // find good features at each scale separately
-            IplImage *grey_temp = 0, *eig_temp = 0;
+            IplImage *m_grey_temp = 0, *eig_temp = 0;
             std::size_t temp_level = (std::size_t)ixyScale;
-            grey_temp = cvCloneImage(grey_pyramid.getImage(temp_level));
-            eig_temp = cvCloneImage(eig_pyramid.getImage(temp_level));
+            m_grey_temp = cvCloneImage(m_grey_pyramid.getImage(temp_level));
+            eig_temp = cvCloneImage(m_eig_pyramid.getImage(temp_level));
             std::vector<CvPoint2D32f> points(0);
-            cvDenseSample(grey_temp, eig_temp, points, quality, min_distance);
+            cvDenseSample(m_grey_temp, eig_temp, points, m_quality, m_min_distance);
             
             // save the feature points
             for( i = 0; i < points.size(); i++ ) {
-                Track track(tracker.trackLength);
-                PointDesc point(hogInfo, hofInfo, mbhInfo, points[i]);
+                Track track(m_tracker.trackLength);
+                PointDesc point(m_hogInfo, m_hofInfo, m_mbhInfo, points[i]);
                 track.addPointDesc(point);
                 tracks.push_back(track);
             }
             
-            cvReleaseImage( &grey_temp );
+            cvReleaseImage( &m_grey_temp );
             cvReleaseImage( &eig_temp );
         }
     }
     
-    // build the image pyramid for the current frame
-    cvCopy( frame, image, 0 );
-    cvCvtColor( image, grey, CV_BGR2GRAY );
-    grey_pyramid.rebuild(grey);
+    // build the m_image pyramid for the current frame
+    cvCopy( frame, m_image, 0 );
+    cvCvtColor( m_image, m_grey, CV_BGR2GRAY );
+    m_grey_pyramid.rebuild(m_grey);
     
-    if( frameNum > 0 ) {
-        init_counter++;
-        for( int ixyScale = 0; ixyScale < scale_num; ++ixyScale ) {
+    if( m_frameNum > 0 ) {
+        m_init_counter++;
+        for( int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
             // track feature points in each scale separately
             std::vector<CvPoint2D32f> points_in(0);
-            std::list<Track>& tracks = xyScaleTracks[ixyScale];
+            std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
             for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ++iTrack) {
                 CvPoint2D32f point = iTrack->pointDescs.back().point;
                 points_in.push_back(point); // collect all the feature points
             }
             int count = points_in.size();
-            IplImage *prev_grey_temp = 0, *grey_temp = 0;
+            IplImage *m_prev_grey_temp = 0, *m_grey_temp = 0;
             std::size_t temp_level = ixyScale;
-            prev_grey_temp = cvCloneImage(prev_grey_pyramid.getImage(temp_level));
-            grey_temp = cvCloneImage(grey_pyramid.getImage(temp_level));
+            m_prev_grey_temp = cvCloneImage(m_prev_grey_pyramid.getImage(temp_level));
+            m_grey_temp = cvCloneImage(m_grey_pyramid.getImage(temp_level));
             
-            cv::Mat prev_grey_mat = cv::cvarrToMat(prev_grey_temp);
-            cv::Mat grey_mat = cv::cvarrToMat(grey_temp);
+            cv::Mat m_prev_grey_mat = cv::cvarrToMat(m_prev_grey_temp);
+            cv::Mat m_grey_mat = cv::cvarrToMat(m_grey_temp);
             
             std::vector<int> status(count);
             std::vector<CvPoint2D32f> points_out(count);
             
             // compute the optical flow
-            IplImage* flow = cvCreateImage(cvGetSize(grey_temp), IPL_DEPTH_32F, 2);
+            IplImage* flow = cvCreateImage(cvGetSize(m_grey_temp), IPL_DEPTH_32F, 2);
             cv::Mat flow_mat = cv::cvarrToMat(flow);
-            cv::calcOpticalFlowFarneback( prev_grey_mat, grey_mat, flow_mat,
+            cv::calcOpticalFlowFarneback( m_prev_grey_mat, m_grey_mat, flow_mat,
                                           sqrt(2)/2.0, 5, 10, 2, 7, 1.5, cv::OPTFLOW_FARNEBACK_GAUSSIAN );
             // track feature points by median filtering
             OpticalFlowTracker(flow, points_in, points_out, status);
             
-            int width = grey_temp->width;
-            int height = grey_temp->height;
+            int width = m_grey_temp->width;
+            int height = m_grey_temp->height;
             // compute the integral histograms
-            DescMat* hogMat = InitDescMat(height, width, hogInfo.nBins);
-            HogComp(prev_grey_temp, hogMat, hogInfo);
+            DescMat* hogMat = InitDescMat(height, width, m_hogInfo.nBins);
+            HogComp(m_prev_grey_temp, hogMat, m_hogInfo);
             
-            DescMat* hofMat = InitDescMat(height, width, hofInfo.nBins);
-            HofComp(flow, hofMat, hofInfo);
+            DescMat* hofMat = InitDescMat(height, width, m_hofInfo.nBins);
+            HofComp(flow, hofMat, m_hofInfo);
             
-            DescMat* mbhMatX = InitDescMat(height, width, mbhInfo.nBins);
-            DescMat* mbhMatY = InitDescMat(height, width, mbhInfo.nBins);
-            MbhComp(flow, mbhMatX, mbhMatY, mbhInfo);
+            DescMat* mbhMatX = InitDescMat(height, width, m_mbhInfo.nBins);
+            DescMat* mbhMatY = InitDescMat(height, width, m_mbhInfo.nBins);
+            MbhComp(flow, mbhMatX, mbhMatY, m_mbhInfo);
             
             i = 0;
             for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ++i) {
@@ -221,35 +216,35 @@ int DenseTracker::compute(IplImage* frame)
                     PointDesc& pointDesc = iTrack->pointDescs.back();
                     CvPoint2D32f prev_point = points_in[i];
                     // get the descriptors for the feature point
-                    CvScalar rect = getRect(prev_point, cvSize(width, height), hogInfo);
-                    pointDesc.hog = getDesc(hogMat, rect, hogInfo);
-                    pointDesc.hof = getDesc(hofMat, rect, hofInfo);
-                    pointDesc.mbhX = getDesc(mbhMatX, rect, mbhInfo);
-                    pointDesc.mbhY = getDesc(mbhMatY, rect, mbhInfo);
+                    CvScalar rect = getRect(prev_point, cvSize(width, height), m_hogInfo);
+                    pointDesc.hog = getDesc(hogMat, rect, m_hogInfo);
+                    pointDesc.hof = getDesc(hofMat, rect, m_hofInfo);
+                    pointDesc.mbhX = getDesc(mbhMatX, rect, m_mbhInfo);
+                    pointDesc.mbhY = getDesc(mbhMatY, rect, m_mbhInfo);
                     
-                    PointDesc point(hogInfo, hofInfo, mbhInfo, points_out[i]);
+                    PointDesc point(m_hogInfo, m_hofInfo, m_mbhInfo, points_out[i]);
                     iTrack->addPointDesc(point);
                     
                     // draw this track
-                    if( show_track == 1 ) {
+                    if( m_show_track == 1 ) {
                         std::list<PointDesc>& descs = iTrack->pointDescs;
                         std::list<PointDesc>::iterator iDesc = descs.begin();
                         float length = descs.size();
                         CvPoint2D32f point0 = iDesc->point;
-                        point0.x *= fscales[ixyScale]; // map the point to first scale
-                        point0.y *= fscales[ixyScale];
+                        point0.x *= m_fscales[ixyScale]; // map the point to first scale
+                        point0.y *= m_fscales[ixyScale];
                         
                         float j = 0;
                         for (iDesc++; iDesc != descs.end(); ++iDesc, ++j) {
                             CvPoint2D32f point1 = iDesc->point;
-                            point1.x *= fscales[ixyScale];
-                            point1.y *= fscales[ixyScale];
+                            point1.x *= m_fscales[ixyScale];
+                            point1.y *= m_fscales[ixyScale];
                             
-                            cvLine(image, cvPointFrom32f(point0), cvPointFrom32f(point1),
+                            cvLine(m_image, cvPointFrom32f(point0), cvPointFrom32f(point1),
                                    CV_RGB(0,cvFloor(255.0*(j+1.0)/length),0), 2, 8,0);
                             point0 = point1;
                         }
-                        cvCircle(image, cvPointFrom32f(point0), 2, CV_RGB(255,0,0), -1, 8,0);
+                        cvCircle(m_image, cvPointFrom32f(point0), 2, CV_RGB(255,0,0), -1, 8,0);
                     }
                     ++iTrack;
                 }
@@ -260,79 +255,79 @@ int DenseTracker::compute(IplImage* frame)
             ReleDescMat(hofMat);
             ReleDescMat(mbhMatX);
             ReleDescMat(mbhMatY);
-            cvReleaseImage( &prev_grey_temp );
-            cvReleaseImage( &grey_temp );
+            cvReleaseImage( &m_prev_grey_temp );
+            cvReleaseImage( &m_grey_temp );
             cvReleaseImage( &flow );
         }
         
-        for( int ixyScale = 0; ixyScale < scale_num; ++ixyScale ) {
-            std::list<Track>& tracks = xyScaleTracks[ixyScale]; // output the features for each scale
+        for( int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
+            std::list<Track>& tracks = m_xyScaleTracks[ixyScale]; // output the features for each scale
             for( std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ) {
-                if( iTrack->pointDescs.size() >= tracker.trackLength+1 ) { // if the trajectory achieves the length we want
-                    std::vector<CvPoint2D32f> trajectory(tracker.trackLength+1);
+                if( iTrack->pointDescs.size() >= m_tracker.trackLength+1 ) { // if the trajectory achieves the length we want
+                    std::vector<CvPoint2D32f> trajectory(m_tracker.trackLength+1);
                     std::list<PointDesc>& descs = iTrack->pointDescs;
                     std::list<PointDesc>::iterator iDesc = descs.begin();
                     
-                    for (int count = 0; count <= tracker.trackLength; ++iDesc, ++count) {
-                        trajectory[count].x = iDesc->point.x*fscales[ixyScale];
-                        trajectory[count].y = iDesc->point.y*fscales[ixyScale];
+                    for (int count = 0; count <= m_tracker.trackLength; ++iDesc, ++count) {
+                        trajectory[count].x = iDesc->point.x*m_fscales[ixyScale];
+                        trajectory[count].y = iDesc->point.y*m_fscales[ixyScale];
                     }
                     float mean_x(0), mean_y(0), var_x(0), var_y(0), length(0);
                     if( isValid(trajectory, mean_x, mean_y, var_x, var_y, length) == 1 ) {
-                        printf("%d\t", frameNum);
-                        printf("%f\t%f\t", mean_x, mean_y);
-                        printf("%f\t%f\t", var_x, var_y);
-                        printf("%f\t", length);
-                        printf("%f\t", fscales[ixyScale]);
+//                         printf("%d\t", m_frameNum);
+//                         printf("%f\t%f\t", mean_x, mean_y);
+//                         printf("%f\t%f\t", var_x, var_y);
+//                         printf("%f\t", length);
+//                         printf("%f\t", m_fscales[ixyScale]);
                         
-                        for (int count = 0; count < tracker.trackLength; ++count)
-                            printf("%f\t%f\t", trajectory[count].x,trajectory[count].y );
+//                         for (int count = 0; count < m_tracker.trackLength; ++count)
+//                             printf("%f\t%f\t", trajectory[count].x,trajectory[count].y );
                         
                         iDesc = descs.begin();
-                        int t_stride = cvFloor(tracker.trackLength/hogInfo.ntCells);
-                        for( int n = 0; n < hogInfo.ntCells; n++ ) {
-                            std::vector<float> vec(hogInfo.dim);
+                        int t_stride = cvFloor(m_tracker.trackLength/m_hogInfo.ntCells);
+                        for( int n = 0; n < m_hogInfo.ntCells; n++ ) {
+                            std::vector<float> vec(m_hogInfo.dim);
                             for( int t = 0; t < t_stride; t++, iDesc++ )
-                                for( int m = 0; m < hogInfo.dim; m++ )
+                                for( int m = 0; m < m_hogInfo.dim; m++ )
                                     vec[m] += iDesc->hog[m];
-                                for( int m = 0; m < hogInfo.dim; m++ )
-                                    printf("%f\t", vec[m]/float(t_stride));
+//                                 for( int m = 0; m < m_hogInfo.dim; m++ )
+//                                     printf("%f\t", vec[m]/float(t_stride));
                         }
                         
                         iDesc = descs.begin();
-                        t_stride = cvFloor(tracker.trackLength/hofInfo.ntCells);
-                        for( int n = 0; n < hofInfo.ntCells; n++ ) {
-                            std::vector<float> vec(hofInfo.dim);
+                        t_stride = cvFloor(m_tracker.trackLength/m_hofInfo.ntCells);
+                        for( int n = 0; n < m_hofInfo.ntCells; n++ ) {
+                            std::vector<float> vec(m_hofInfo.dim);
                             for( int t = 0; t < t_stride; t++, iDesc++ )
-                                for( int m = 0; m < hofInfo.dim; m++ )
+                                for( int m = 0; m < m_hofInfo.dim; m++ )
                                     vec[m] += iDesc->hof[m];
-                                for( int m = 0; m < hofInfo.dim; m++ )
-                                    printf("%f\t", vec[m]/float(t_stride));
+//                                 for( int m = 0; m < m_hofInfo.dim; m++ )
+//                                     printf("%f\t", vec[m]/float(t_stride));
                         }
                         
                         iDesc = descs.begin();
-                        t_stride = cvFloor(tracker.trackLength/mbhInfo.ntCells);
-                        for( int n = 0; n < mbhInfo.ntCells; n++ ) {
-                            std::vector<float> vec(mbhInfo.dim);
+                        t_stride = cvFloor(m_tracker.trackLength/m_mbhInfo.ntCells);
+                        for( int n = 0; n < m_mbhInfo.ntCells; n++ ) {
+                            std::vector<float> vec(m_mbhInfo.dim);
                             for( int t = 0; t < t_stride; t++, iDesc++ )
-                                for( int m = 0; m < mbhInfo.dim; m++ )
+                                for( int m = 0; m < m_mbhInfo.dim; m++ )
                                     vec[m] += iDesc->mbhX[m];
-                                for( int m = 0; m < mbhInfo.dim; m++ )
-                                    printf("%f\t", vec[m]/float(t_stride));
+//                                 for( int m = 0; m < m_mbhInfo.dim; m++ )
+//                                     printf("%f\t", vec[m]/float(t_stride));
                         }
                         
                         iDesc = descs.begin();
-                        t_stride = cvFloor(tracker.trackLength/mbhInfo.ntCells);
-                        for( int n = 0; n < mbhInfo.ntCells; n++ ) {
-                            std::vector<float> vec(mbhInfo.dim);
+                        t_stride = cvFloor(m_tracker.trackLength/m_mbhInfo.ntCells);
+                        for( int n = 0; n < m_mbhInfo.ntCells; n++ ) {
+                            std::vector<float> vec(m_mbhInfo.dim);
                             for( int t = 0; t < t_stride; t++, iDesc++ )
-                                for( int m = 0; m < mbhInfo.dim; m++ )
+                                for( int m = 0; m < m_mbhInfo.dim; m++ )
                                     vec[m] += iDesc->mbhY[m];
-                                for( int m = 0; m < mbhInfo.dim; m++ )
-                                    printf("%f\t", vec[m]/float(t_stride));
+//                                 for( int m = 0; m < m_mbhInfo.dim; m++ )
+//                                     printf("%f\t", vec[m]/float(t_stride));
                         }
                         
-                        printf("\n");
+//                         printf("\n");
                     }
                     iTrack = tracks.erase(iTrack);
                 }
@@ -341,10 +336,10 @@ int DenseTracker::compute(IplImage* frame)
             }
         }
         
-        if( init_counter == tracker.initGap ) { // detect new feature points every initGap frames
-            init_counter = 0;
-            for (int ixyScale = 0; ixyScale < scale_num; ++ixyScale) {
-                std::list<Track>& tracks = xyScaleTracks[ixyScale];
+        if( m_init_counter == m_tracker.initGap ) { // detect new feature points every initGap frames
+            m_init_counter = 0;
+            for (int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale) {
+                std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
                 std::vector<CvPoint2D32f> points_in(0);
                 std::vector<CvPoint2D32f> points_out(0);
                 for(std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); iTrack++, i++) {
@@ -353,37 +348,37 @@ int DenseTracker::compute(IplImage* frame)
                     points_in.push_back(point);
                 }
                 
-                IplImage *grey_temp = 0, *eig_temp = 0;
+                IplImage *m_grey_temp = 0, *eig_temp = 0;
                 std::size_t temp_level = (std::size_t)ixyScale;
-                grey_temp = cvCloneImage(grey_pyramid.getImage(temp_level));
-                eig_temp = cvCloneImage(eig_pyramid.getImage(temp_level));
+                m_grey_temp = cvCloneImage(m_grey_pyramid.getImage(temp_level));
+                eig_temp = cvCloneImage(m_eig_pyramid.getImage(temp_level));
                 
-                cvDenseSample(grey_temp, eig_temp, points_in, points_out, quality, min_distance);
+                cvDenseSample(m_grey_temp, eig_temp, points_in, points_out, m_quality, m_min_distance);
                 // save the new feature points
                 for( i = 0; i < points_out.size(); i++) {
-                    Track track(tracker.trackLength);
-                    PointDesc point(hogInfo, hofInfo, mbhInfo, points_out[i]);
+                    Track track(m_tracker.trackLength);
+                    PointDesc point(m_hogInfo, m_hofInfo, m_mbhInfo, points_out[i]);
                     track.addPointDesc(point);
                     tracks.push_back(track);
                 }
-                cvReleaseImage( &grey_temp );
+                cvReleaseImage( &m_grey_temp );
                 cvReleaseImage( &eig_temp );
             }
         }
     }
     
-    cvCopy( frame, prev_image, 0 );
-    cvCvtColor( prev_image, prev_grey, CV_BGR2GRAY );
-    prev_grey_pyramid.rebuild(prev_grey);
+    cvCopy( frame, m_prev_image, 0 );
+    cvCvtColor( m_prev_image, m_prev_grey, CV_BGR2GRAY );
+    m_prev_grey_pyramid.rebuild(m_prev_grey);
     
-    frameNum++;
+    m_frameNum++;
 }
 
 
-void DenseTracker::InitTrackerInfo(TrackerInfo* tracker, int track_length, int init_gap)
+void DenseTracker::InitTrackerInfo(TrackerInfo* tracker, int m_track_length, int m_init_gap)
 {
-    tracker->trackLength = track_length;
-    tracker->initGap = init_gap;
+    tracker->trackLength = m_track_length;
+    tracker->initGap = m_init_gap;
 }
 
 DescMat* DenseTracker::InitDescMat(int height, int width, int nBins)
@@ -403,16 +398,16 @@ void DenseTracker::ReleDescMat( DescMat* descMat)
     free(descMat);
 }
 
-void DenseTracker::InitDescInfo(DescInfo* descInfo, int nBins, int flag, int orientation, int size, int nxy_cell, int nt_cell)
+void DenseTracker::InitDescInfo(DescInfo* descInfo, int nBins, int flag, int orientation, int size, int m_nxy_cell, int m_nt_cell)
 {
     descInfo->nBins = nBins;
     descInfo->fullOrientation = orientation;
     descInfo->norm = 2;
-    descInfo->threshold = min_flow;
+    descInfo->threshold = m_min_flow;
     descInfo->flagThre = flag;
-    descInfo->nxCells = nxy_cell;
-    descInfo->nyCells = nxy_cell;
-    descInfo->ntCells = nt_cell;
+    descInfo->nxCells = m_nxy_cell;
+    descInfo->nyCells = m_nxy_cell;
+    descInfo->ntCells = m_nt_cell;
     descInfo->dim = descInfo->nBins*descInfo->nxCells*descInfo->nyCells;
     descInfo->blockHeight = size;
     descInfo->blockWidth = size;
@@ -420,7 +415,7 @@ void DenseTracker::InitDescInfo(DescInfo* descInfo, int nBins, int flag, int ori
 
 /* get the rectangle for computing the descriptor */
 CvScalar DenseTracker::getRect(const CvPoint2D32f point, // the interest point position
-                 const CvSize size, // the size of the image
+                 const CvSize size, // the size of the m_image
                  const DescInfo descInfo) // parameters about the descriptor
 {
     int x_min = descInfo.blockWidth/2;
@@ -446,7 +441,7 @@ CvScalar DenseTracker::getRect(const CvPoint2D32f point, // the interest point p
     return rect;
 }
 
-/* compute integral histograms for the whole image */
+/* compute integral histograms for the whole m_image */
 void DenseTracker::BuildDescMat(const IplImage* xComp, // x gradient component
                   const IplImage* yComp, // y gradient component
                   DescMat* descMat, // output integral histograms
@@ -563,7 +558,7 @@ std::vector<float> DenseTracker::getDesc(const DescMat* descMat, // input integr
                 }
                 float temp = sumBottomRight + sumTopLeft
                 - sumBottomLeft - sumTopRight;
-                vec[iDesc] = std::max<float>(temp, 0) + epsilon;
+                vec[iDesc] = std::max<float>(temp, 0) + m_epsilon;
             }
         }
         if (descInfo.norm == 1) // L1 normalization
@@ -720,10 +715,10 @@ int DenseTracker::isValid(std::vector<CvPoint2D32f>& track, float& mean_x, float
     var_x = sqrt(var_x);
     var_y = sqrt(var_y);
     // remove static trajectory
-    if(var_x < min_var && var_y < min_var)
+    if(var_x < m_min_var && var_y < m_min_var)
         return 0;
     // remove random trajectory
-    if( var_x > max_var || var_y > max_var )
+    if( var_x > m_max_var || var_y > m_max_var )
         return 0;
     
     for(int i = 1; i < size; i++) {
@@ -739,7 +734,7 @@ int DenseTracker::isValid(std::vector<CvPoint2D32f>& track, float& mean_x, float
         float temp_x = track[i].x;
         float temp_y = track[i].y;
         float temp_dis = sqrt(temp_x*temp_x + temp_y*temp_y);
-        if( temp_dis > max_dis && temp_dis > len_thre )
+        if( temp_dis > m_max_dis && temp_dis > len_thre )
             return 0;
     }
     
@@ -752,54 +747,54 @@ int DenseTracker::isValid(std::vector<CvPoint2D32f>& track, float& mean_x, float
     return 1;
 }
 
-/* detect new feature points in the whole image */
-void DenseTracker::cvDenseSample(IplImage* grey, IplImage* eig, std::vector<CvPoint2D32f>& points,
-                   const double quality, const double min_distance)
+/* detect new feature points in the whole m_image */
+void DenseTracker::cvDenseSample(IplImage* m_grey, IplImage* eig, std::vector<CvPoint2D32f>& points,
+                   const double m_quality, const double m_min_distance)
 {
-    int width = cvFloor(grey->width/min_distance);
-    int height = cvFloor(grey->height/min_distance);
+    int width = cvFloor(m_grey->width/m_min_distance);
+    int height = cvFloor(m_grey->height/m_min_distance);
     double maxVal = 0;
-    cvCornerMinEigenVal(grey, eig, 3, 3);
+    cvCornerMinEigenVal(m_grey, eig, 3, 3);
     cvMinMaxLoc(eig, 0, &maxVal, 0, 0, 0);
-    const double threshold = maxVal*quality;
+    const double threshold = maxVal*m_quality;
     
-    int offset = cvFloor(min_distance/2);
+    int offset = cvFloor(m_min_distance/2);
     for(int i = 0; i < height; i++) 
         for(int j = 0; j < width; j++) {
-            int x = cvFloor(j*min_distance+offset);
-            int y = cvFloor(i*min_distance+offset);
+            int x = cvFloor(j*m_min_distance+offset);
+            int y = cvFloor(i*m_min_distance+offset);
             if(CV_IMAGE_ELEM(eig, float, y, x) > threshold) 
                 points.push_back(cvPoint2D32f(x,y));
         }
 }
-/* detect new feature points in a image without overlapping to previous points */
-void DenseTracker::cvDenseSample(IplImage* grey, IplImage* eig, std::vector<CvPoint2D32f>& points_in,
-                   std::vector<CvPoint2D32f>& points_out, const double quality, const double min_distance)
+/* detect new feature points in a m_image without overlapping to previous points */
+void DenseTracker::cvDenseSample(IplImage* m_grey, IplImage* eig, std::vector<CvPoint2D32f>& points_in,
+                   std::vector<CvPoint2D32f>& points_out, const double m_quality, const double m_min_distance)
 {
-    int width = cvFloor(grey->width/min_distance);
-    int height = cvFloor(grey->height/min_distance);
+    int width = cvFloor(m_grey->width/m_min_distance);
+    int height = cvFloor(m_grey->height/m_min_distance);
     double maxVal = 0;
-    cvCornerMinEigenVal(grey, eig, 3, 3);
+    cvCornerMinEigenVal(m_grey, eig, 3, 3);
     cvMinMaxLoc(eig, 0, &maxVal, 0, 0, 0);
-    const double threshold = maxVal*quality;
+    const double threshold = maxVal*m_quality;
     
     std::vector<int> counters(width*height);
     for(int i = 0; i < points_in.size(); i++) {
         CvPoint2D32f point = points_in[i];
-        if(point.x >= min_distance*width || point.y >= min_distance*height)
+        if(point.x >= m_min_distance*width || point.y >= m_min_distance*height)
             continue;
-        int x = cvFloor(point.x/min_distance);
-        int y = cvFloor(point.y/min_distance);
+        int x = cvFloor(point.x/m_min_distance);
+        int y = cvFloor(point.y/m_min_distance);
         counters[y*width+x]++;
     }
     
     int index = 0;
-    int offset = cvFloor(min_distance/2);
+    int offset = cvFloor(m_min_distance/2);
     for(int i = 0; i < height; i++) 
         for(int j = 0; j < width; j++, index++) {
             if(counters[index] == 0) {
-                int x = cvFloor(j*min_distance+offset);
-                int y = cvFloor(i*min_distance+offset);
+                int x = cvFloor(j*m_min_distance+offset);
+                int y = cvFloor(i*m_min_distance+offset);
                 if(CV_IMAGE_ELEM(eig, float, y, x) > threshold) 
                     points_out.push_back(cvPoint2D32f(x,y));
             }

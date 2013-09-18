@@ -41,50 +41,50 @@ public:
     
     int compute(IplImage * frame);
     
-    IplImage * getImage() { return image; }
+    IplImage * getImage() { return m_image; }
 protected:
     // parameters for descriptors
-    int patch_size;
-    int nxy_cell;
-    int nt_cell;
-    bool fullOrientation;
-    float epsilon;
-    float min_flow;
+    int m_patch_size;
+    int m_nxy_cell;
+    int m_nt_cell;
+    bool m_fullOrientation;
+    float m_epsilon;
+    float m_min_flow;
     
     // parameters for tracking
-    int start_frame;
-    int end_frame;
-    double quality;
-    double min_distance;
-    int init_gap;
-    int track_length;
+    int m_start_frame;
+    int m_end_frame;
+    double m_quality;
+    double m_min_distance;
+    int m_init_gap;
+    int m_track_length;
     
     // parameters for the trajectory descriptor
-    float min_var;
-    float max_var;
-    float max_dis;
+    float m_min_var;
+    float m_max_var;
+    float m_max_dis;
     
     // parameters for multi-scale
-    int scale_num;  
-    float scale_stride;
+    int m_scale_num;  
+    float m_scale_stride;
     
-    int frameNum;
-    int init_counter;
-    std::vector<std::list<Track> > xyScaleTracks;
+    int m_frameNum;
+    int m_init_counter;
+    std::vector<std::list<Track> > m_xyScaleTracks;
     
-    TrackerInfo tracker;
-    DescInfo hogInfo;
-    DescInfo hofInfo;
-    DescInfo mbhInfo;
+    TrackerInfo m_tracker;
+    DescInfo m_hogInfo;
+    DescInfo m_hofInfo;
+    DescInfo m_mbhInfo;
     
     // Images
-    IplImageWrapper image, prev_image, grey, prev_grey;
-    IplImagePyramid grey_pyramid, prev_grey_pyramid, eig_pyramid;
+    IplImageWrapper m_image, m_prev_image, m_grey, m_prev_grey;
+    IplImagePyramid m_grey_pyramid, m_prev_grey_pyramid, m_eig_pyramid;
     
     // I/O
-    CvCapture* capture;
-    float* fscales; // float scale values
-    int show_track; // set show_track = 1, if you want to visualize the trajectories
+    CvCapture* m_capture;
+    float* m_fscales; // float scale values
+    int m_show_track; // set show_track = 1, if you want to visualize the trajectories
     
     // METHODS SECTION
     void InitTrackerInfo(TrackerInfo* tracker, int track_length, int init_gap);
