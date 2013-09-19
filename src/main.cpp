@@ -18,9 +18,14 @@ int main( int argC, char* argV[] ) {
         IplImage * img = cvLoadImage(ss.str().c_str());
         tracker.compute(img);
         
-        cvShowImage( "DenseTrack", tracker.getImage());
+        cv::Mat denseTrack;
+        tracker.drawTracks(denseTrack);
+        cv::imshow("DenseTrack", denseTrack);
         int c = cvWaitKey(3);
-        if((char)c == 27) break;
+        if ((char)c == 27) break;
+        if ((char)c == 81) break;
+        if ((char)c == 113) break;
+        if ((char)c == 32) cvWaitKey(0);
         
         cvReleaseImage(&img);
     }

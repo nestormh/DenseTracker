@@ -3,6 +3,7 @@
 
 #include <list>
 
+struct point;
 namespace dense_tracker {
     typedef struct DescInfo
     {

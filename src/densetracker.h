@@ -40,6 +40,7 @@ public:
     int loop();
     
     int compute(IplImage * frame);
+    void drawTracks(cv::Mat & output);
     
     IplImage * getImage() { return m_image; }
 protected:
@@ -85,6 +86,11 @@ protected:
     CvCapture* m_capture;
     float* m_fscales; // float scale values
     int m_show_track; // set show_track = 1, if you want to visualize the trajectories
+    
+    // Determines if a given point has been tracked
+    std::vector<int> m_status;
+    cv::Mat m_correspondencesPrev2Curr;
+    cv::Mat m_correspondencesCurr2Prev;
     
     // METHODS SECTION
     void InitTrackerInfo(TrackerInfo* tracker, int track_length, int init_gap);

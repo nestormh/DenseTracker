@@ -17,11 +17,18 @@
 #include <opencv2/opencv.hpp>
 
 #include <stdio.h>
+#include <omp.h>
+
+#include <iostream>
 
 #include <boost/numeric/ublas/vector.hpp>
 #include <boost/numeric/ublas/io.hpp>
 
 #include "densetracker.h"
+#include </home/nestor/Dropbox/projects/GPUCPD/src/LU-Decomposition/Libs/Cuda/include/device_launch_parameters.h>
+
+using namespace std;
+
 namespace dense_tracker {
 
 DenseTracker::DenseTracker()
@@ -54,7 +61,7 @@ DenseTracker::DenseTracker()
     // I/O
     m_capture = 0;
     m_fscales = 0; // float scale values
-    m_show_track = 1; // set m_show_track = 1, if you want to visualize the trajectories
+    m_show_track = 0; // set m_show_track = 1, if you want to visualize the trajectories
     
     InitTrackerInfo(&m_tracker, m_track_length, m_init_gap);
     InitDescInfo(&m_hogInfo, 8, 0, 1, m_patch_size, m_nxy_cell, m_nt_cell);
@@ -115,8 +122,11 @@ int DenseTracker::loop()
 
 int DenseTracker::compute(IplImage* frame)
 {
+    double cp0 = omp_get_wtime();
     int i, j;
     if( ! m_image ) {
+        m_init_counter = 0; // indicate when to detect new feature points
+        
         // initailize all the buffers
         m_image = IplImageWrapper( cvGetSize(frame), 8, 3 );
         m_image->origin = frame->origin;
@@ -127,6 +137,9 @@ int DenseTracker::compute(IplImage* frame)
         m_prev_grey = IplImageWrapper( cvGetSize(frame), 8, 1 );
         m_prev_grey_pyramid = IplImagePyramid( cvGetSize(frame), 8, 1, m_scale_stride );
         m_eig_pyramid = IplImagePyramid( cvGetSize(frame), 32, 1, m_scale_stride );
+        
+        m_correspondencesPrev2Curr = cv::Mat(frame->height, frame->width, CV_32SC2);
+        m_correspondencesCurr2Prev = cv::Mat(frame->height, frame->width, CV_32SC2);
         
         cvCopy( frame, m_image, 0 );
         cvCvtColor( m_image, m_grey, CV_BGR2GRAY );
@@ -162,6 +175,9 @@ int DenseTracker::compute(IplImage* frame)
         }
     }
     
+    m_correspondencesPrev2Curr.setTo(cv::Vec2i(-1, -1));
+    m_correspondencesCurr2Prev.setTo(cv::Vec2i(-1, -1));
+    
     // build the m_image pyramid for the current frame
     cvCopy( frame, m_image, 0 );
     cvCvtColor( m_image, m_grey, CV_BGR2GRAY );
@@ -169,7 +185,9 @@ int DenseTracker::compute(IplImage* frame)
     
     if( m_frameNum > 0 ) {
         m_init_counter++;
+
         for( int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
+            double cp1 = omp_get_wtime();
             // track feature points in each scale separately
             std::vector<CvPoint2D32f> points_in(0);
             std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
@@ -186,16 +204,24 @@ int DenseTracker::compute(IplImage* frame)
             cv::Mat m_prev_grey_mat = cv::cvarrToMat(m_prev_grey_temp);
             cv::Mat m_grey_mat = cv::cvarrToMat(m_grey_temp);
             
-            std::vector<int> status(count);
             std::vector<CvPoint2D32f> points_out(count);
+            m_status.clear();
+            m_status.resize(count);
+            
+            double cp2 = omp_get_wtime();
             
             // compute the optical flow
             IplImage* flow = cvCreateImage(cvGetSize(m_grey_temp), IPL_DEPTH_32F, 2);
             cv::Mat flow_mat = cv::cvarrToMat(flow);
             cv::calcOpticalFlowFarneback( m_prev_grey_mat, m_grey_mat, flow_mat,
                                           sqrt(2)/2.0, 5, 10, 2, 7, 1.5, cv::OPTFLOW_FARNEBACK_GAUSSIAN );
+            
+            double cp3 = omp_get_wtime();
+            
             // track feature points by median filtering
-            OpticalFlowTracker(flow, points_in, points_out, status);
+            OpticalFlowTracker(flow, points_in, points_out, m_status);
+            
+            double cp4 = omp_get_wtime();
             
             int width = m_grey_temp->width;
             int height = m_grey_temp->height;
@@ -203,16 +229,24 @@ int DenseTracker::compute(IplImage* frame)
             DescMat* hogMat = InitDescMat(height, width, m_hogInfo.nBins);
             HogComp(m_prev_grey_temp, hogMat, m_hogInfo);
             
+            double cp4a = omp_get_wtime();
+            
             DescMat* hofMat = InitDescMat(height, width, m_hofInfo.nBins);
             HofComp(flow, hofMat, m_hofInfo);
+            
+            double cp4b = omp_get_wtime();
             
             DescMat* mbhMatX = InitDescMat(height, width, m_mbhInfo.nBins);
             DescMat* mbhMatY = InitDescMat(height, width, m_mbhInfo.nBins);
             MbhComp(flow, mbhMatX, mbhMatY, m_mbhInfo);
             
+            double cp4c = omp_get_wtime();
+            
+            double cp5 = omp_get_wtime();
+            
             i = 0;
             for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ++i) {
-                if( status[i] == 1 ) { // if the feature point is successfully tracked
+                if( m_status[i] == 1 ) { // if the feature point is successfully tracked
                     PointDesc& pointDesc = iTrack->pointDescs.back();
                     CvPoint2D32f prev_point = points_in[i];
                     // get the descriptors for the feature point
@@ -224,6 +258,18 @@ int DenseTracker::compute(IplImage* frame)
                     
                     PointDesc point(m_hogInfo, m_hofInfo, m_mbhInfo, points_out[i]);
                     iTrack->addPointDesc(point);
+                    
+                    {
+                        std::list<PointDesc>::iterator iDesc = iTrack->pointDescs.begin();
+                        if (iTrack->pointDescs.size() > 1) {
+                            cv::Point2d pointCurr = cv::Point2d(iDesc->point.x, iDesc->point.y) * m_fscales[ixyScale];
+                            iDesc++;
+                            cv::Point2d pointPrev = cv::Point2d(iDesc->point.x, iDesc->point.y) * m_fscales[ixyScale];
+                            
+                            m_correspondencesCurr2Prev.at<cv::Vec2i>(pointCurr.y, pointCurr.x) = cv::Vec2i(pointPrev.x, pointPrev.y);
+                            m_correspondencesPrev2Curr.at<cv::Vec2i>(pointPrev.y, pointPrev.x) = cv::Vec2i(pointCurr.x, pointCurr.y);
+                        }
+                    }
                     
                     // draw this track
                     if( m_show_track == 1 ) {
@@ -258,7 +304,22 @@ int DenseTracker::compute(IplImage* frame)
             cvReleaseImage( &m_prev_grey_temp );
             cvReleaseImage( &m_grey_temp );
             cvReleaseImage( &flow );
+            
+            double cp6 = omp_get_wtime();
+            
+//             cout << "1-2 " << cp2 - cp1 << endl;
+//             cout << "2-3 " << cp3 - cp2 << endl;
+//             cout << "3-4 " << cp4 - cp3 << endl;
+//             cout << "4-5 " << cp5 - cp4 << endl;
+//             cout << "4-4a " << cp4a - cp4 << endl;
+//             cout << "4a-4b " << cp4b - cp4a << endl;
+//             cout << "4b-4c " << cp4c - cp4b << endl;
+//             cout << "5-6 " << cp6 - cp5 << endl;     
+//             cout << "********************************" << endl;
+            
         }
+        
+        double cp7 = omp_get_wtime();
         
         for( int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
             std::list<Track>& tracks = m_xyScaleTracks[ixyScale]; // output the features for each scale
@@ -336,6 +397,8 @@ int DenseTracker::compute(IplImage* frame)
             }
         }
         
+        double cp8 = omp_get_wtime();
+        
         if( m_init_counter == m_tracker.initGap ) { // detect new feature points every initGap frames
             m_init_counter = 0;
             for (int ixyScale = 0; ixyScale < m_scale_num; ++ixyScale) {
@@ -365,11 +428,21 @@ int DenseTracker::compute(IplImage* frame)
                 cvReleaseImage( &eig_temp );
             }
         }
+        
+        double cp9 = omp_get_wtime();
+        
+//         cout << "7-8 " << cp8 - cp7 << endl;
+//         cout << "8-9 " << cp9 - cp8 << endl;
+        
     }
     
     cvCopy( frame, m_prev_image, 0 );
     cvCvtColor( m_prev_image, m_prev_grey, CV_BGR2GRAY );
     m_prev_grey_pyramid.rebuild(m_prev_grey);
+
+    double cp10 = omp_get_wtime();
+    
+//     cout << "10-0 " << cp10 - cp0 << endl;
     
     m_frameNum++;
 }
@@ -801,4 +874,55 @@ void DenseTracker::cvDenseSample(IplImage* m_grey, IplImage* eig, std::vector<Cv
         }
 }
 
+void DenseTracker::drawTracks(cv::Mat& output)
+{
+    output = cv::Mat(m_image->height, m_image->width, CV_8UC3);
+    cv::Mat(m_image).copyTo(output);
+    
+    vector<cv::Scalar> color(output.cols);
+    for (uint32_t i = 0; i < output.cols; i++) {
+        color[i] = cv::Scalar(rand() & 0xFF, rand() & 0xFF, rand() & 0xFF);
+    }
+    
+    for (uint32_t i = 0; i < output.rows; i++) {
+        for (uint32_t j = 0; j < output.cols; j++) {
+            const cv::Point2i pointCurr(j, i);
+            const cv::Vec2i tmpVect = m_correspondencesCurr2Prev.at<cv::Vec2i>(i, j);
+            const cv::Point2i pointPrev(tmpVect);
+            
+            if (pointPrev != cv::Point2i(-1, -1)) {
+                cv::line(output, pointCurr, pointPrev, color[j]);
+            }
+            
+        }
+    }
+    
+//     for(uint32_t ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
+//         const std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
+//         uint32_t i = 0;
+//         for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ++i, iTrack++) {
+//             if( m_status[i] == 1 ) { // if the feature point is successfully tracked
+//                 std::list<PointDesc>& descs = iTrack->pointDescs;
+//                 std::list<PointDesc>::iterator iDesc = descs.begin();
+//                 float length = descs.size();
+//                 CvPoint2D32f point0 = iDesc->point;
+//                 point0.x *= m_fscales[ixyScale]; // map the point to first scale
+//                 point0.y *= m_fscales[ixyScale];
+//                 
+//                 float j = 0;
+//                 for (iDesc++; iDesc != descs.end(); ++iDesc, ++j) {
+//                     CvPoint2D32f point1 = iDesc->point;
+//                     point1.x *= m_fscales[ixyScale];
+//                     point1.y *= m_fscales[ixyScale];
+//                     
+//                     cvLine(m_image, cvPointFrom32f(point0), cvPointFrom32f(point1),
+//                            CV_RGB(0,cvFloor(255.0*(j+1.0)/length),0), 2, 8,0);
+//                     point0 = point1;
+//                 }
+//                 cvCircle(m_image, cvPointFrom32f(point0), 2, CV_RGB(255,0,0), -1, 8,0);
+//             }
+//         }
+//     }
+}
+    
 }
