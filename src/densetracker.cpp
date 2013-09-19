@@ -893,7 +893,6 @@ void DenseTracker::drawTracks(cv::Mat& output)
             if (pointPrev != cv::Point2i(-1, -1)) {
                 cv::line(output, pointCurr, pointPrev, color[j]);
             }
-            
         }
     }
     
