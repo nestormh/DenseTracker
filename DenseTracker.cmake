@@ -24,6 +24,7 @@ set (DENSETRACKER_INCLUDE_DIRS
     ${OpenCV_INCLUDE_DIR}
     ${Boost_INCLUDE_DIR}
     ${CUDA_INCLUDE_DIRS}
+    ${DENSETRACKER_PATH}
     ${DENSETRACKER_PATH}/dense_trajectory_release_v1.1
 )
 

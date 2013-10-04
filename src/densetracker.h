@@ -40,7 +40,11 @@ public:
     int loop();
     
     int compute(IplImage * frame);
+    int compute(const cv::Mat & frame);
     void drawTracks(cv::Mat & output);
+    
+    cv::Point2i getPrevPoint(const cv::Point2i & currPoint);
+    cv::Point2i getCurrPoint(const cv::Point2i & prevPoint);
     
     IplImage * getImage() { return m_image; }
 protected:

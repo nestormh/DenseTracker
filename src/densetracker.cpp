@@ -23,6 +23,7 @@
 
 #include <boost/numeric/ublas/vector.hpp>
 #include <boost/numeric/ublas/io.hpp>
+#include <boost/concept_check.hpp>
 
 #include "densetracker.h"
 #include </home/nestor/Dropbox/projects/GPUCPD/src/LU-Decomposition/Libs/Cuda/include/device_launch_parameters.h>
@@ -45,9 +46,9 @@ DenseTracker::DenseTracker()
     m_start_frame = 0;
     m_end_frame = 1000000;
     m_quality = 0.001;
-    m_min_distance = 5;
+    m_min_distance = 1; //5;
     m_init_gap = 1;
-    m_track_length = 15;
+    m_track_length = 1;
     
     // parameters for the trajectory descriptor
     m_min_var = sqrt(3);
@@ -120,8 +121,59 @@ int DenseTracker::loop()
         cvDestroyWindow("DenseTrack");
 }
 
+int DenseTracker::compute(const cv::Mat & frame)
+{
+    IplImage * img = cvCreateImage(cvSize(frame.cols, frame.rows), IPL_DEPTH_8U, 3);
+    memcpy((void *)img->imageData, (void *)frame.data, frame.cols * frame.rows * frame.channels() * sizeof(uchar));
+    
+    compute(img);
+    
+    cvReleaseImage(&img);
+}
+
 int DenseTracker::compute(IplImage* frame)
 {
+ 
+    // NOTE:  By uncommenting this part, you assume that the tracking will be performed by using just Farneback
+    {
+        if (! m_prev_image) {
+            m_prev_image= IplImageWrapper( cvGetSize(frame), 8, 3 );
+            m_prev_image->origin = frame->origin;
+            m_correspondencesPrev2Curr = cv::Mat(frame->height, frame->width, CV_32SC2);
+            m_correspondencesCurr2Prev = cv::Mat(frame->height, frame->width, CV_32SC2);
+            m_correspondencesPrev2Curr.setTo(cv::Vec2i(-1, -1));
+            m_correspondencesCurr2Prev.setTo(cv::Vec2i(-1, -1));
+        }
+        
+        cv::Mat flow(frame->height, frame->width, CV_32FC2);
+        cv::Mat prevGray, currGray;
+        cv::cvtColor(cv::cvarrToMat(frame), currGray, CV_BGR2GRAY);
+        cv::cvtColor(cv::cvarrToMat(m_prev_image), prevGray, CV_BGR2GRAY);
+        cv::calcOpticalFlowFarneback(prevGray, currGray, flow,
+                                    sqrt(2)/2.0, 5, 10, 2, 7, 1.5, cv::OPTFLOW_FARNEBACK_GAUSSIAN );
+        for (uint32_t y = 0; y < flow.rows; y++) {
+            for (uint32_t x = 0; x < flow.cols; x++) {
+                const cv::Point2i pointCurr(x, y);
+                const cv::Point2i pointFlow = cv::Point2i(flow.at<cv::Vec2f>(y, x)[0], flow.at<cv::Vec2f>(y, x)[1]);
+                const cv::Point2i pointPrev = pointCurr + pointFlow;
+                if ((pointPrev.x >= 0) || (pointPrev.y >= 0) ||
+                    (pointPrev.x < flow.cols) || (pointPrev.y < flow.rows)) {
+                    
+                    m_correspondencesCurr2Prev.at<cv::Vec2i>(pointCurr.y, pointCurr.x) = cv::Vec2i(pointPrev.x, pointPrev.y);
+                m_correspondencesPrev2Curr.at<cv::Vec2i>(pointPrev.y, pointPrev.x) = cv::Vec2i(pointCurr.x, pointCurr.y);
+                    }
+            }
+        }
+        
+        cvCopy( frame, m_prev_image, 0 );
+        
+        m_frameNum++;
+        
+        return 0;
+    }
+    // End of NOTE
+    
+    
     double cp0 = omp_get_wtime();
     int i, j;
     if( ! m_image ) {
@@ -297,6 +349,7 @@ int DenseTracker::compute(IplImage* frame)
                 else // remove the track, if we lose feature point
                     iTrack = tracks.erase(iTrack);
             }
+            
             ReleDescMat(hogMat);
             ReleDescMat(hofMat);
             ReleDescMat(mbhMatX);
@@ -439,12 +492,6 @@ int DenseTracker::compute(IplImage* frame)
     cvCopy( frame, m_prev_image, 0 );
     cvCvtColor( m_prev_image, m_prev_grey, CV_BGR2GRAY );
     m_prev_grey_pyramid.rebuild(m_prev_grey);
-
-    double cp10 = omp_get_wtime();
-    
-//     cout << "10-0 " << cp10 - cp0 << endl;
-    
-    m_frameNum++;
 }
 
 
@@ -876,6 +923,11 @@ void DenseTracker::cvDenseSample(IplImage* m_grey, IplImage* eig, std::vector<Cv
 
 void DenseTracker::drawTracks(cv::Mat& output)
 {
+    if (m_image == NULL) {
+        output = cv::Mat::zeros(200, 200, CV_8UC3);
+        return;
+    }
+    
     output = cv::Mat(m_image->height, m_image->width, CV_8UC3);
     cv::Mat(m_image).copyTo(output);
     
@@ -887,7 +939,7 @@ void DenseTracker::drawTracks(cv::Mat& output)
     for (uint32_t i = 0; i < output.rows; i++) {
         for (uint32_t j = 0; j < output.cols; j++) {
             const cv::Point2i pointCurr(j, i);
-            const cv::Vec2i tmpVect = m_correspondencesCurr2Prev.at<cv::Vec2i>(i, j);
+            const cv::Vec2i & tmpVect = m_correspondencesCurr2Prev.at<cv::Vec2i>(i, j);
             const cv::Point2i pointPrev(tmpVect);
             
             if (pointPrev != cv::Point2i(-1, -1)) {
@@ -895,33 +947,19 @@ void DenseTracker::drawTracks(cv::Mat& output)
             }
         }
     }
-    
-//     for(uint32_t ixyScale = 0; ixyScale < m_scale_num; ++ixyScale ) {
-//         const std::list<Track>& tracks = m_xyScaleTracks[ixyScale];
-//         uint32_t i = 0;
-//         for (std::list<Track>::iterator iTrack = tracks.begin(); iTrack != tracks.end(); ++i, iTrack++) {
-//             if( m_status[i] == 1 ) { // if the feature point is successfully tracked
-//                 std::list<PointDesc>& descs = iTrack->pointDescs;
-//                 std::list<PointDesc>::iterator iDesc = descs.begin();
-//                 float length = descs.size();
-//                 CvPoint2D32f point0 = iDesc->point;
-//                 point0.x *= m_fscales[ixyScale]; // map the point to first scale
-//                 point0.y *= m_fscales[ixyScale];
-//                 
-//                 float j = 0;
-//                 for (iDesc++; iDesc != descs.end(); ++iDesc, ++j) {
-//                     CvPoint2D32f point1 = iDesc->point;
-//                     point1.x *= m_fscales[ixyScale];
-//                     point1.y *= m_fscales[ixyScale];
-//                     
-//                     cvLine(m_image, cvPointFrom32f(point0), cvPointFrom32f(point1),
-//                            CV_RGB(0,cvFloor(255.0*(j+1.0)/length),0), 2, 8,0);
-//                     point0 = point1;
-//                 }
-//                 cvCircle(m_image, cvPointFrom32f(point0), 2, CV_RGB(255,0,0), -1, 8,0);
-//             }
-//         }
-//     }
 }
-    
+
+cv::Point2i DenseTracker::getPrevPoint(const cv::Point2i& currPoint)
+{
+    return cv::Point2i(m_correspondencesCurr2Prev.at<cv::Vec2i>(currPoint.y, currPoint.x));
+}
+
+cv::Point2i DenseTracker::getCurrPoint(const cv::Point2i& prevPoint)
+{
+    return cv::Point2i(m_correspondencesPrev2Curr.at<cv::Vec2i>(prevPoint.y, prevPoint.x));
+}
+
+
+
+
 }
