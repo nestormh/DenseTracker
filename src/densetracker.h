@@ -22,6 +22,12 @@
 #include "opencv/IplImagePyramid.h"
 #include "descriptors_structures.h"
 
+#include <opencv2/nonfree/features2d.hpp>
+
+#include <vector>
+
+using namespace std;
+
 namespace dense_tracker {
     
 typedef struct TrackerInfo
@@ -34,13 +40,21 @@ class DenseTracker
 {
 
 public:
-    DenseTracker();
+    enum t_Tracking { TRACKING_FARNEBACK = 0, TRACKING_LEAR = 1, TRACKING_LK = 2, TRACKING_SURF = 3 };
+    
+    DenseTracker(const t_Tracking trackingType = TRACKING_FARNEBACK);
     virtual ~DenseTracker();
     
     int loop();
     
-    int compute(IplImage * frame);
+//     int compute(IplImage * frame);
     int compute(const cv::Mat & frame);
+    
+    int computeFarneback(const cv::Mat & frame);
+    int computeLEAR(const cv::Mat & frame);
+    int computeLEAR(IplImage* frame);
+    int computeLK(const cv::Mat & frame);
+    
     void drawTracks(cv::Mat & output);
     
     cv::Point2i getPrevPoint(const cv::Point2i & currPoint);
@@ -85,6 +99,7 @@ protected:
     // Images
     IplImageWrapper m_image, m_prev_image, m_grey, m_prev_grey;
     IplImagePyramid m_grey_pyramid, m_prev_grey_pyramid, m_eig_pyramid;
+    cv::Mat m_prevImgMat;
     
     // I/O
     CvCapture* m_capture;
@@ -95,6 +110,8 @@ protected:
     std::vector<int> m_status;
     cv::Mat m_correspondencesPrev2Curr;
     cv::Mat m_correspondencesCurr2Prev;
+    
+    t_Tracking m_trackingType;
     
     // METHODS SECTION
     void InitTrackerInfo(TrackerInfo* tracker, int track_length, int init_gap);
@@ -114,6 +131,11 @@ protected:
                        const double quality, const double min_distance);
     void cvDenseSample(IplImage* grey, IplImage* eig, std::vector<CvPoint2D32f>& points_in,
                        std::vector<CvPoint2D32f>& points_out, const double quality, const double min_distance);
+    
+    void findPairsOFlow(const cv::Mat & img1, const cv::Mat & img2, 
+                        vector<cv::Point2f> & outPoints1, vector<cv::Point2f> & outPoints2);
+    void findPairsSURF(const cv::Mat & img1, const cv::Mat & img2,
+                        vector<cv::Point2f> & outPoints1, vector<cv::Point2f> & outPoints2);
 };
 
 }
